@@ -22,6 +22,12 @@ final class HabitInstance {
     var routine: Routine?
     var phaseInDate: Date?
 
+    /// Completions recorded against this specific placement. Uses
+    /// `.nullify` so removing a habit from a routine preserves the
+    /// historical completion records (they become "untagged").
+    @Relationship(deleteRule: .nullify, inverse: \HabitCompletion.instance)
+    var completions: [HabitCompletion]? = []
+
     init(habit: Habit, routine: Routine, sortOrder: Int, phaseInDate: Date? = nil) {
         self.id = UUID()
         self.habit = habit

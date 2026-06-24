@@ -11,7 +11,7 @@ struct RoutineCard: View {
     let routine: Routine
     let date: Date
     var onEdit: (() -> Void)? = nil
-    var onToggleHabit: ((Habit) -> Void)? = nil
+    var onToggleInstance: ((HabitInstance) -> Void)? = nil
     var onShowTodos: ((Habit) -> Void)? = nil
 
     private var instances: [HabitInstance] { routine.orderedHabits }
@@ -20,12 +20,8 @@ struct RoutineCard: View {
         instances.filter { $0.isActive(on: date) }
     }
 
-    private var activeHabits: [Habit] {
-        activeInstances.compactMap { $0.habit }
-    }
-
     private var completionRate: Double {
-        CompletionTracker.completionRate(for: activeHabits, on: date)
+        CompletionTracker.completionRate(for: activeInstances, on: date)
     }
 
     var body: some View {
@@ -34,19 +30,21 @@ struct RoutineCard: View {
             Divider()
                 .padding(.horizontal, 12)
 
-            if activeHabits.isEmpty {
+            if activeInstances.isEmpty {
                 emptyState
             } else {
                 VStack(spacing: 0) {
-                    ForEach(activeHabits, id: \.id) { habit in
-                        HabitRow(
-                            habit: habit,
-                            isCompleted: CompletionTracker.isCompleted(habit: habit, on: date),
-                            onToggle: { onToggleHabit?(habit) },
-                            onShowTodos: { onShowTodos?(habit) }
-                        )
-                        if habit.id != activeHabits.last?.id {
-                            Divider().padding(.leading, 56)
+                    ForEach(activeInstances, id: \.id) { instance in
+                        if let habit = instance.habit {
+                            HabitRow(
+                                habit: habit,
+                                isCompleted: CompletionTracker.isCompleted(instance: instance, on: date),
+                                onToggle: { onToggleInstance?(instance) },
+                                onShowTodos: { onShowTodos?(habit) }
+                            )
+                            if instance.id != activeInstances.last?.id {
+                                Divider().padding(.leading, 56)
+                            }
                         }
                     }
                 }
@@ -109,8 +107,8 @@ struct RoutineCard: View {
     }
 
     private var progressLabel: String {
-        let done = activeHabits.filter { CompletionTracker.isCompleted(habit: $0, on: date) }.count
-        return "\(done) of \(activeHabits.count) complete"
+        let done = activeInstances.filter { CompletionTracker.isCompleted(instance: $0, on: date) }.count
+        return "\(done) of \(activeInstances.count) complete"
     }
 
     private var emptyState: some View {

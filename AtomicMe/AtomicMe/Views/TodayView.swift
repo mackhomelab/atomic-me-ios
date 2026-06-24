@@ -236,8 +236,8 @@ struct TodayView: View {
                         routine: routine,
                         date: selectedDate,
                         onEdit: { editingRoutine = routine },
-                        onToggleHabit: { habit in
-                            CompletionTracker.toggle(habit: habit, on: selectedDate, context: modelContext)
+                        onToggleInstance: { instance in
+                            CompletionTracker.toggle(instance: instance, on: selectedDate, context: modelContext)
                         },
                         onShowTodos: { habit in
                             todosForHabit = habit
