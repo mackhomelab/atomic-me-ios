@@ -46,14 +46,29 @@ enum DailyPlan {
         return habits.filter { seen.insert($0.id).inserted }
     }
 
-    /// Completed habits / scheduled habits on `date`. Returns 0 when nothing
-    /// is scheduled, so empty days don't drag down the average.
+    /// Every habit placement scheduled on `date`, including duplicates when
+    /// a habit is stacked in multiple routines that day. This is the unit
+    /// progress math should use now that completions are recorded per
+    /// instance.
+    static func activeInstances(
+        on date: Date,
+        allRoutines: [Routine],
+        allOverrides: [DayOverride]
+    ) -> [HabitInstance] {
+        let plan = routines(on: date, allRoutines: allRoutines, allOverrides: allOverrides)
+        return plan
+            .flatMap { $0.orderedHabits }
+            .filter { $0.isActive(on: date) }
+    }
+
+    /// Completed instances / scheduled instances on `date`. Returns 0 when
+    /// nothing is scheduled, so empty days don't drag down the average.
     static func completionRate(
         on date: Date,
         allRoutines: [Routine],
         allOverrides: [DayOverride]
     ) -> Double {
-        let habits = activeHabits(on: date, allRoutines: allRoutines, allOverrides: allOverrides)
-        return CompletionTracker.completionRate(for: habits, on: date)
+        let instances = activeInstances(on: date, allRoutines: allRoutines, allOverrides: allOverrides)
+        return CompletionTracker.completionRate(for: instances, on: date)
     }
 }

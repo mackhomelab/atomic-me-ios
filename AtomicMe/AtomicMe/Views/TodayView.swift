@@ -44,8 +44,8 @@ struct TodayView: View {
         }
     }
 
-    private var allActiveHabits: [Habit] {
-        DailyPlan.activeHabits(
+    private var allActiveInstances: [HabitInstance] {
+        DailyPlan.activeInstances(
             on: selectedDate,
             allRoutines: allRoutines,
             allOverrides: allOverrides
@@ -53,7 +53,7 @@ struct TodayView: View {
     }
 
     private var overallRate: Double {
-        CompletionTracker.completionRate(for: allActiveHabits, on: selectedDate)
+        CompletionTracker.completionRate(for: allActiveInstances, on: selectedDate)
     }
 
     var body: some View {

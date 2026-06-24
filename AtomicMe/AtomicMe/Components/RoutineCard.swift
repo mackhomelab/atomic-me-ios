@@ -14,6 +14,11 @@ struct RoutineCard: View {
     var onToggleInstance: ((HabitInstance) -> Void)? = nil
     var onShowTodos: ((Habit) -> Void)? = nil
 
+    /// User override that re-expands a fully-completed card. Resets back to
+    /// false whenever the card transitions into the fully-completed state
+    /// so the next "all done" event collapses it again.
+    @State private var expandWhileComplete: Bool = false
+
     private var instances: [HabitInstance] { routine.orderedHabits }
 
     private var activeInstances: [HabitInstance] {
@@ -24,37 +29,56 @@ struct RoutineCard: View {
         CompletionTracker.completionRate(for: activeInstances, on: date)
     }
 
+    private var isFullyComplete: Bool {
+        !activeInstances.isEmpty && activeInstances.allSatisfy {
+            CompletionTracker.isCompleted(instance: $0, on: date)
+        }
+    }
+
+    private var isCollapsed: Bool {
+        isFullyComplete && !expandWhileComplete
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            Divider()
-                .padding(.horizontal, 12)
 
-            if activeInstances.isEmpty {
-                emptyState
-            } else {
-                VStack(spacing: 0) {
-                    ForEach(activeInstances, id: \.id) { instance in
-                        if let habit = instance.habit {
-                            HabitRow(
-                                habit: habit,
-                                isCompleted: CompletionTracker.isCompleted(instance: instance, on: date),
-                                onToggle: { onToggleInstance?(instance) },
-                                onShowTodos: { onShowTodos?(habit) }
-                            )
-                            if instance.id != activeInstances.last?.id {
-                                Divider().padding(.leading, 56)
+            if !isCollapsed {
+                Divider()
+                    .padding(.horizontal, 12)
+
+                if activeInstances.isEmpty {
+                    emptyState
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(activeInstances, id: \.id) { instance in
+                            if let habit = instance.habit {
+                                HabitRow(
+                                    habit: habit,
+                                    isCompleted: CompletionTracker.isCompleted(instance: instance, on: date),
+                                    onToggle: { onToggleInstance?(instance) },
+                                    onShowTodos: { onShowTodos?(habit) }
+                                )
+                                if instance.id != activeInstances.last?.id {
+                                    Divider().padding(.leading, 56)
+                                }
                             }
                         }
                     }
+                    .padding(.vertical, 4)
                 }
-                .padding(.vertical, 4)
             }
         }
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(Color(.secondarySystemBackground))
         )
+        .animation(.easeInOut(duration: 0.25), value: isCollapsed)
+        .onChange(of: isFullyComplete) { _, nowComplete in
+            if nowComplete {
+                expandWhileComplete = false
+            }
+        }
     }
 
     private var header: some View {
@@ -92,7 +116,13 @@ struct RoutineCard: View {
             CompletionRing(progress: completionRate, tint: routine.timeOfDay.tint)
                 .frame(width: 32, height: 32)
 
-            if onEdit != nil {
+            if isFullyComplete {
+                Image(systemName: isCollapsed ? "chevron.down" : "chevron.up")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(8)
+                    .background(Color(.tertiarySystemBackground), in: Circle())
+            } else if onEdit != nil {
                 Button(action: { onEdit?() }) {
                     Image(systemName: "slider.horizontal.3")
                         .font(.system(size: 14, weight: .semibold))
@@ -104,6 +134,12 @@ struct RoutineCard: View {
             }
         }
         .padding(12)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if isFullyComplete {
+                expandWhileComplete.toggle()
+            }
+        }
     }
 
     private var progressLabel: String {

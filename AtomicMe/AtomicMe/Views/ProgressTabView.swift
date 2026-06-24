@@ -18,25 +18,40 @@ struct ProgressTabView: View {
     @Query private var allOverrides: [DayOverride]
 
     private var calendar: Calendar { Calendar.current }
-    private let windowDays: Int = 14
+    private let maxWindowDays: Int = 14
 
-    private var windowDates: [Date] {
-        let today = calendar.startOfDay(for: Date())
-        return (0..<windowDays).reversed().compactMap {
-            calendar.date(byAdding: .day, value: -$0, to: today)
-        }
+    private var today: Date { calendar.startOfDay(for: Date()) }
+
+    /// The earliest completion logged across every habit. Used to grow the
+    /// overall window from "since you started" into a rolling 14-day window
+    /// once enough history exists.
+    private var firstEverCompletionDay: Date? {
+        let earliest = allHabits.flatMap { $0.completions ?? [] }.map { $0.date }.min()
+        return earliest.map { calendar.startOfDay(for: $0) }
     }
 
-    /// (date, scheduled habit count, completed count) for each day in the window.
+    /// Dates included in the overall stats. Starts at the first ever
+    /// completion and grows until it caps at `maxWindowDays`, after which
+    /// it slides forward.
+    private var windowDates: [Date] {
+        let start = effectiveWindowStart(earliestCompletion: firstEverCompletionDay) ?? today
+        return datesFrom(start, through: today)
+    }
+
+    /// (date, scheduled instance count, completed instance count) for each
+    /// day in the window. Counts duplicates when a habit appears in more
+    /// than one routine that day.
     private var dailyStats: [(date: Date, scheduled: Int, completed: Int)] {
         windowDates.map { date in
-            let habits = DailyPlan.activeHabits(
+            let instances = DailyPlan.activeInstances(
                 on: date,
                 allRoutines: allRoutines,
                 allOverrides: allOverrides
             )
-            let completed = habits.filter { CompletionTracker.isCompleted(habit: $0, on: date) }.count
-            return (date, habits.count, completed)
+            let completed = instances.filter {
+                CompletionTracker.isCompleted(instance: $0, on: date)
+            }.count
+            return (date, instances.count, completed)
         }
     }
 
@@ -56,49 +71,56 @@ struct ProgressTabView: View {
         return rates.reduce(0, +) / Double(rates.count)
     }
 
-    /// Per-habit: in how many of its scheduled days within the window was it completed.
-    private var perHabitRates: [(habit: Habit, rate: Double, scheduled: Int)] {
+    /// Per-habit: instances completed / instances scheduled across that
+    /// habit's own dynamic window (from its first completion until today,
+    /// capped at the rolling 14 days). Habits with no completions yet are
+    /// omitted — we have nothing to compute against.
+    private var perHabitRates: [(habit: Habit, rate: Double, dates: [Date])] {
         allHabits.compactMap { habit in
+            let earliest = (habit.completions ?? []).map { $0.date }.min()
+                .map { calendar.startOfDay(for: $0) }
+            guard let start = effectiveWindowStart(earliestCompletion: earliest) else { return nil }
+            let dates = datesFrom(start, through: today)
             var scheduled = 0
             var completed = 0
-            for date in windowDates {
-                let active = DailyPlan.activeHabits(
+            for date in dates {
+                let instances = DailyPlan.activeInstances(
                     on: date,
                     allRoutines: allRoutines,
                     allOverrides: allOverrides
-                )
-                if active.contains(where: { $0.id == habit.id }) {
-                    scheduled += 1
-                    if CompletionTracker.isCompleted(habit: habit, on: date) {
-                        completed += 1
-                    }
-                }
+                ).filter { $0.habit?.id == habit.id }
+                scheduled += instances.count
+                completed += instances.filter {
+                    CompletionTracker.isCompleted(instance: $0, on: date)
+                }.count
             }
             guard scheduled > 0 else { return nil }
             let rate = Double(completed) / Double(scheduled)
-            return (habit, rate, scheduled)
+            return (habit, rate, dates)
         }
         .sorted { $0.rate > $1.rate }
     }
 
-    /// Number of consecutive days (going back from today) where everything
-    /// scheduled was completed. Days with nothing scheduled break the streak.
+    /// Number of consecutive days (going back from today) where every
+    /// scheduled instance was completed. Days with nothing scheduled break
+    /// the streak.
     private var currentStreak: Int {
         var streak = 0
-        let today = calendar.startOfDay(for: Date())
         for offset in 0..<60 {
             guard let date = calendar.date(byAdding: .day, value: -offset, to: today) else { break }
-            let active = DailyPlan.activeHabits(
+            let instances = DailyPlan.activeInstances(
                 on: date,
                 allRoutines: allRoutines,
                 allOverrides: allOverrides
             )
             // Don't count "today" as a missed day if there's still time to complete.
-            if active.isEmpty {
+            if instances.isEmpty {
                 if offset == 0 { continue }
                 break
             }
-            let allDone = active.allSatisfy { CompletionTracker.isCompleted(habit: $0, on: date) }
+            let allDone = instances.allSatisfy {
+                CompletionTracker.isCompleted(instance: $0, on: date)
+            }
             if allDone {
                 streak += 1
             } else if offset == 0 {
@@ -108,6 +130,38 @@ struct ProgressTabView: View {
             }
         }
         return streak
+    }
+
+    /// Returns the start of the window: the later of (earliestCompletion)
+    /// and (today − 13 days). nil when there are no completions yet.
+    private func effectiveWindowStart(earliestCompletion: Date?) -> Date? {
+        guard let earliest = earliestCompletion else { return nil }
+        guard let cutoff = calendar.date(byAdding: .day, value: -(maxWindowDays - 1), to: today) else {
+            return earliest
+        }
+        return max(earliest, cutoff)
+    }
+
+    private func datesFrom(_ start: Date, through end: Date) -> [Date] {
+        var dates: [Date] = []
+        var cursor = start
+        while cursor <= end {
+            dates.append(cursor)
+            guard let next = calendar.date(byAdding: .day, value: 1, to: cursor) else { break }
+            cursor = next
+        }
+        return dates
+    }
+
+    /// Caption shown next to the overall stat: "Since Jun 18" while ramping
+    /// up, "Last 14 days" once the rolling window is full.
+    private var windowLabel: String {
+        guard !windowDates.isEmpty else { return "No completions yet" }
+        if windowDates.count >= maxWindowDays {
+            return "Last \(maxWindowDays) days"
+        }
+        guard let start = windowDates.first else { return "Last \(windowDates.count) days" }
+        return "Since \(start.formatted(.dateTime.month(.abbreviated).day()))"
     }
 
     var body: some View {
@@ -128,7 +182,7 @@ struct ProgressTabView: View {
     private var overallCard: some View {
         HStack(spacing: 16) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Last \(windowDays) days")
+                Text(windowLabel)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Text("\(Int(overallRate * 100))%")
@@ -226,7 +280,7 @@ struct ProgressTabView: View {
                 .font(.subheadline.weight(.semibold))
 
             if perHabitRates.isEmpty {
-                Text("No habits scheduled in the last \(windowDays) days yet.")
+                Text("Complete a habit to start tracking its progress.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
@@ -235,7 +289,7 @@ struct ProgressTabView: View {
                         habitProgressRow(
                             habit: entry.habit,
                             rate: entry.rate,
-                            scheduled: entry.scheduled
+                            dates: entry.dates
                         )
                     }
                 }
@@ -249,7 +303,7 @@ struct ProgressTabView: View {
         )
     }
 
-    private func habitProgressRow(habit: Habit, rate: Double, scheduled: Int) -> some View {
+    private func habitProgressRow(habit: Habit, rate: Double, dates: [Date]) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 10) {
                 Image(systemName: habit.iconSystemName)
@@ -260,7 +314,7 @@ struct ProgressTabView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     Text(habit.name)
                         .font(.subheadline.weight(.medium))
-                    Text("\(scheduled) day\(scheduled == 1 ? "" : "s") scheduled")
+                    Text(habitRowSubtitle(for: dates))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -273,6 +327,14 @@ struct ProgressTabView: View {
             ProgressView(value: rate)
                 .tint(habit.color)
         }
+    }
+
+    private func habitRowSubtitle(for dates: [Date]) -> String {
+        if dates.count >= maxWindowDays {
+            return "Last \(maxWindowDays) days"
+        }
+        guard let start = dates.first else { return "" }
+        return "Since \(start.formatted(.dateTime.month(.abbreviated).day()))"
     }
 }
 
